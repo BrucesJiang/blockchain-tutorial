@@ -1,35 +1,43 @@
 package main
 
 import (//依赖
-  "bufio"
+  //"bufio"
   "crypto/sha256"
   "encoding/hex"
   "encoding/json"
+  "fmt"
   "io"
   "log"
-  //"net/http"
-  "net"
+  "net/http"
+  //"net"
   "os"
   "strconv"
+  "strings"
   "sync"
   "time"
 
   "github.com/davecgh/go-spew/spew"
-  //"github.com/gorilla/mux"
+  "github.com/gorilla/mux"
   "github.com/joho/godotenv"
 )
 
+// difficulty of miner
+const difficulty = 1
+
 //数据模型, 代表每一个块的数据模型
 type Block struct {
-  Index     int  //这个块在链中的位置
-  Timestamp string // 块生成的时间戳
-  BPM       int   //心跳数据 BPM 心率
-  Hash      string   //这个块通过SHA256算法生成的散列值
-  PrevHash  string //前一个块的SHA256散列值
+  Index      int  //这个块在链中的位置
+  Timestamp  string // 块生成的时间戳
+  BPM        int   //心跳数据 BPM 心率
+  Hash       string   //这个块通过SHA256算法生成的散列值
+  PrevHash   string //前一个块的SHA256散列值
+  Difficulty int //挖矿难度
+  Nonce      string //
 }
 
 /**
  * POST请求的handler稍微复杂， 定义POST请求的payload
+ * Message takes incoming JSON paylod for writing heart rate
  */
 type Message struct {
   BPM int
@@ -42,7 +50,7 @@ var mutex = &sync.Mutex{}
 var Blockchain []Block
 
 //bcServer handles incoming concurrent Blocks
-var bcServer chan []Block
+//var bcServer chan []Block
 
 func main() {
   err := godotenv.Load()
@@ -50,129 +58,144 @@ func main() {
     log.Fatal(err)
   }
 
-  bcServer = make(chan []Block)
+  //bcServer = make(chan []Block)
 
   //create genesis block
-  t := time.Now()
-
-  genesisBlock := Block{0, t.String(), 0, "", ""}
-  spew.Dump(genesisBlock)
-  newBlockchain := append(Blockchain, genesisBlock)
-  replaceChain(newBlockchain)
-  //start TCP and serve TCP server
-
-  server, err := net.Listen("tcp", ":"+os.Getenv("ADDR"))
-
-  if err != nil {
-    log.Fatal(err)
-  }
-
-  defer server.Close()
-
-
-  for {
-    conn, err := server.Accept()
-    if err != nil {
-      log.Fatal(err)
-    }
-    go handleConn(conn)
-  }
-
-  // go func() {
-  //   t := time.Now()
-  //   genesisBlock := Block{0, t.String(), 0, "", ""}
-  //   spew.Dump(genesisBlock)
-  //   Blockchain = append(Blockchain, genesisBlock)
-  // }()
-  // log.Fatal(run())
-}
-
-func handleConn(conn net.Conn) {
-  defer conn.Close()
-
-  io.WriteString(conn, "Enter a new BPM:")
-
-  scanner := bufio.NewScanner(conn)
-
-  //take in BPM from stdin and add it to blockchain after conducting necessary validation
+  // t := time.Now()
+  //
+  // genesisBlock := Block{0, t.String(), 0, "", ""}
+  // spew.Dump(genesisBlock)
+  // newBlockchain := append(Blockchain, genesisBlock)
+  // replaceChain(newBlockchain)
+  // //start TCP and serve TCP server
+  //
+  // server, err := net.Listen("tcp", ":"+os.Getenv("ADDR"))
+  //
+  // if err != nil {
+  //   log.Fatal(err)
+  // }
+  //
+  // defer server.Close()
+  //
+  //
+  // for {
+  //   conn, err := server.Accept()
+  //   if err != nil {
+  //     log.Fatal(err)
+  //   }
+  //   go handleConn(conn)
+  // }
 
   go func() {
-    for scanner.Scan() {
-      bpm, err := strconv.Atoi(scanner.Text())
+    t := time.Now()
+    genesisBlock := Block{}
+    genesisBlock = Block{0, t.String(), 0, calculateHash(genesisBlock), "", difficulty, ""}
+    spew.Dump(genesisBlock)
 
-      if err != nil {
-        log.Printf("%v not a number: %v", scanner.Text(), err)
-        continue
-      }
-
-      newBlock := generateBlock(Blockchain[len(Blockchain)-1], bpm)
-
-      // if err != nil {
-      //   log.Printf(err)
-      //   continue;
-      // }
-
-      if isBlockValid(newBlock, Blockchain[len(Blockchain)-1]) {
-        newBlockchain := append(Blockchain, newBlock)
-        replaceChain(newBlockchain)
-      }
-
-      bcServer <- Blockchain
-      io.WriteString(conn, "\nEnter a new BPM:")
-    }
+    mutex.Lock()
+    Blockchain = append(Blockchain, genesisBlock)
+    mutex.Unlock()
   }()
-
-  //simulate receiving broadcast
-  go func() {
-    for {
-      time.Sleep(1 * time.Second)  //广播的间隔
-      mutex.Lock()
-      output, err := json.Marshal(Blockchain)
-
-      if err != nil {
-        log.Fatal(err)
-      }
-
-      mutex.Unlock()
-
-      io.WriteString(conn, string(output))
-    }
-  }()
-
-  for _ = range bcServer {
-    spew.Dump(Blockchain, "\n")
-  }
+  log.Fatal(run())
 }
 
+// func handleConn(conn net.Conn) {
+//   defer conn.Close()
+//
+//   io.WriteString(conn, "Enter a new BPM:")
+//
+//   scanner := bufio.NewScanner(conn)
+//
+//   //take in BPM from stdin and add it to blockchain after conducting necessary validation
+//
+//   go func() {
+//     for scanner.Scan() {
+//       bpm, err := strconv.Atoi(scanner.Text())
+//
+//       if err != nil {
+//         log.Printf("%v not a number: %v", scanner.Text(), err)
+//         continue
+//       }
+//
+//       newBlock := generateBlock(Blockchain[len(Blockchain)-1], bpm)
+//
+//       // if err != nil {
+//       //   log.Printf(err)
+//       //   continue;
+//       // }
+//
+//       if isBlockValid(newBlock, Blockchain[len(Blockchain)-1]) {
+//         newBlockchain := append(Blockchain, newBlock)
+//         replaceChain(newBlockchain)
+//       }
+//
+//       bcServer <- Blockchain
+//       io.WriteString(conn, "\nEnter a new BPM:")
+//     }
+//   }()
+//
+//   //simulate receiving broadcast
+//   go func() {
+//     for {
+//       time.Sleep(1 * time.Second)  //广播的间隔
+//       mutex.Lock()
+//       output, err := json.Marshal(Blockchain)
+//
+//       if err != nil {
+//         log.Fatal(err)
+//       }
+//
+//       mutex.Unlock()
+//
+//       io.WriteString(conn, string(output))
+//     }
+//   }()
+//
+//   for _ = range bcServer {
+//     spew.Dump(Blockchain, "\n")
+//   }
+// }
 
 /**
- * Gorilla/mux 初始化Web服务
+ * 检查给定的哈希值是否满足要求
+ * > 哈希值必须具有给定位的前导0
+ * > “前导0” 的位数是由难度(difficulty)决定的
+ * > 可以动态调整难度(difficulty)来确保Proof-of-Work更难解
+ *
+ */
+
+func isHashValid(hash string, difficulty int) bool {
+  prefix := strings.Repeat("0", difficulty)
+  return strings.HasPrefix(hash, prefix)
+}
+
+/** Gorilla/mux 初始化Web服务
  * 其中的端口号是通过前面提到的 .env 来获得，再添加一些基本的配置参数，这个 web 服务就已经可以 listen and serve
  */
-// func run() error {
-//   mux := makeMuxRouter()
-//   httpAddr := os.Getenv("ADDR")
-//   log.Println("Listen on", os.Getenv("ADDR"))
-//   s := &http.Server{
-//     Addr:           ":" + httpAddr,
-//     Handler :       mux,
-//     ReadTimeout:    10 * time.Second,
-//     WriteTimeout:   10 * time.Second,
-//     MaxHeaderBytes: 1 << 20,
-//   }
-//
-//   if err := s.ListenAndServe(); err != nil {
-//     return err
-//   }
-//
-//   return nil
-// }
+func run() error {
+  mux := makeMuxRouter()
+  httpAddr := os.Getenv("ADDR")
+  log.Println("Listen on", os.Getenv("ADDR"))
+  s := &http.Server{
+    Addr:           ":" + httpAddr,
+    Handler :       mux,
+    ReadTimeout:    10 * time.Second,
+    WriteTimeout:   10 * time.Second,
+    MaxHeaderBytes: 1 << 20,
+  }
+
+  if err := s.ListenAndServe(); err != nil {
+    return err
+  }
+
+  return nil
+}
 
 /**
  *alculateHash 函数接受一个块，通过块中的 Index，Timestamp，BPM，以及 PrevHash 值来计算出 SHA256 散列值
  */
 func calculateHash(block Block) string {
-  record := strconv.Itoa(block.Index) + block.Timestamp + strconv.Itoa(block.BPM) + block.PrevHash
+  record := strconv.Itoa(block.Index) + block.Timestamp + strconv.Itoa(block.BPM) + block.PrevHash + block.Nonce
   h := sha256.New()
   h.Write([]byte(record))
   hashed := h.Sum(nil)
@@ -192,8 +215,21 @@ func generateBlock(prevBlock Block, BPM int) Block {
   newBlock.Timestamp = t.String()
   newBlock.BPM = BPM
   newBlock.PrevHash = prevBlock.Hash
-  newBlock.Hash = calculateHash(newBlock)
+  newBlock.Difficulty = difficulty
 
+  for i := 0; ; i ++ {
+    hex := fmt.Sprintf("%x", i)
+    newBlock.Nonce = hex
+    if !isHashValid(calculateHash(newBlock), newBlock.Difficulty) {
+      fmt.Println(calculateHash(newBlock), " do more work!")
+      time.Sleep(time.Second)
+      continue
+    }else {
+      fmt.Println(calculateHash(newBlock), " work done !")
+      newBlock.Hash = calculateHash(newBlock)
+      break
+    }
+  }
   return newBlock
 }
 
@@ -230,64 +266,67 @@ func replaceChain(newBlocks []Block) {
  * 定义不同的endpoint以及对应的handler
  *  例如, 对于 "/" 的GET请求，我们可以查看整个链
  *  ”/“ 的POST请求可以创建块
+ * create handlers
  */
-// func makeMuxRouter() http.Handler {
-//   muxRouter := mux.NewRouter()
-//   muxRouter.HandleFunc("/", handleGetBlockchain).Methods("GET")
-//   muxRouter.HandleFunc("/", handleWriteBlock).Methods("POST")
-//   return muxRouter
-// }
+func makeMuxRouter() http.Handler {
+  muxRouter := mux.NewRouter()
+  muxRouter.HandleFunc("/", handleGetBlockchain).Methods("GET")
+  muxRouter.HandleFunc("/", handleWriteBlock).Methods("POST")
+  return muxRouter
+}
 
 /**
  * GET请求的handler
  * 直接以 JSON 格式返回整个链，你可以在浏览器中访问 localhost:8080 或者 127.0.0.1:8080 来查看
+ * write blockchain when we receive an http request
  */
-// func handleGetBlockchain(w http.ResponseWriter, r *http.Request) {
-//   bytes, err := json.MarshalIndent(Blockchain, "","  ")
-//   if err != nil {
-//     http.Error(w, err.Error(), http.StatusInternalServerError)
-//     return
-//   }
-//
-//   io.WriteString(w, string(bytes))
-// }
+func handleGetBlockchain(w http.ResponseWriter, r *http.Request) {
+  bytes, err := json.MarshalIndent(Blockchain, "","  ")
+  if err != nil {
+    http.Error(w, err.Error(), http.StatusInternalServerError)
+    return
+  }
+
+  io.WriteString(w, string(bytes))
+}
 
 /*
  * POST 请求的handler
+ * takes JSON payload as an input for heart rate (BPM)
  */
-// func handleWriteBlock(w http.ResponseWriter, r *http.Request) {
-//   w.Header().Set("Content-Type", "application/json")
-//   var m Message
-//
-//   decoder := json.NewDecoder(r.Body)
-//   if err := decoder.Decode(&m); err != nil {
-//     responseWithJSON(w, r, http.StatusBadRequest, r.Body)
-//     return
-//   }
-//
-//   defer r.Body.Close()
-//
-//   mutex.Lock() //加锁
-//   newBlock := generateBlock(Blockchain[len(Blockchain)-1], m.BPM)
-//   mutex.Unlock() //移除锁
-//
-//   if isBlockValid(newBlock, Blockchain[len(Blockchain)-1]) {
-//     newBlockchain := append(Blockchain, newBlock)
-//     replaceChain(newBlockchain)
-//     spew.Dump(Blockchain)
-//   }
-//
-//   responseWithJSON(w, r, http.StatusCreated, newBlock)
-// }
+func handleWriteBlock(w http.ResponseWriter, r *http.Request) {
+  w.Header().Set("Content-Type", "application/json")
+  var m Message
+
+  decoder := json.NewDecoder(r.Body)
+  if err := decoder.Decode(&m); err != nil {
+    responseWithJSON(w, r, http.StatusBadRequest, r.Body)
+    return
+  }
+
+  defer r.Body.Close()
+
+  mutex.Lock() //加锁
+  newBlock := generateBlock(Blockchain[len(Blockchain)-1], m.BPM)
+  mutex.Unlock() //移除锁
+
+  if isBlockValid(newBlock, Blockchain[len(Blockchain)-1]) {
+    newBlockchain := append(Blockchain, newBlock)
+    replaceChain(newBlockchain)
+    spew.Dump(Blockchain)
+  }
+
+  responseWithJSON(w, r, http.StatusCreated, newBlock)
+}
 
 
-// func responseWithJSON(w http.ResponseWriter, r *http.Request, code int, payload interface{}) {
-//   response, err := json.MarshalIndent(payload, "", "  ")
-//   if err != nil {
-//     w.WriteHeader(http.StatusInternalServerError)
-//     w.Write([]byte("HTTP 500: Internal Server Error"))
-//     return
-//   }
-//   w.WriteHeader(code)
-//   w.Write(response)
-// }
+func responseWithJSON(w http.ResponseWriter, r *http.Request, code int, payload interface{}) {
+  response, err := json.MarshalIndent(payload, "", "  ")
+  if err != nil {
+    w.WriteHeader(http.StatusInternalServerError)
+    w.Write([]byte("HTTP 500: Internal Server Error"))
+    return
+  }
+  w.WriteHeader(code)
+  w.Write(response)
+}

@@ -85,3 +85,28 @@ go get github.com/joho/godotenv
 
 图 1
 ![网络的构建](./doc/images/run-blockchain.png)
+
+# Version 3.0
+工作量证明（Proof of Work, PoW)
+
+添加工作两证明所需的变量：
+```go
+// Block represents each 'item' in the blockchain
+type Block struct {
+	Index      int
+	Timestamp  string
+	BPM        int
+	Hash       string
+	PrevHash   string
+	Difficulty int
+	Nonce      string
+}
+```
+重新修改generateBlock函数
+
+结果演示
+
+![POW](./doc/images/POW.png)
+
+
+##下一步学习， IPFS存取大文件并与区块链打通
